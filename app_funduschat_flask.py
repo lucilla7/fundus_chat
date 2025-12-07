@@ -109,15 +109,17 @@ else:
     IMAGE_PATHS, FEATURES, LABELS = [], [], []
     for cls in os.listdir(DATASET_FOLDER):
         cdir = os.path.join(DATASET_FOLDER, cls)
-        if not os.path.isdir(cdir): continue
-        for f in os.listdir(cdir):
-            if not f.lower().endswith(('jpg','png','jpeg')): continue
-            p = os.path.join(cdir, f)
-            img = load_image(p)
-            if img is None: continue
-            IMAGE_PATHS.append(p)
-            FEATURES.append(hist_feature(img))
-            LABELS.append(cls)
+#        if not os.path.isdir(cdir): continue
+#        for f in os.listdir(cdir):
+#            if not f.lower().endswith(('jpg','png','jpeg')): continue
+#            p = os.path.join(cdir, f)
+        if not cdir.lower().endswith(('jpg','png','jpeg')): continue
+        img = load_image(cdir)
+        if img is None: continue
+        IMAGE_PATHS.append(cdir)
+        FEATURES.append(hist_feature(img))
+        LABELS.append(cls)
+
     FEATURES = np.array(FEATURES)
     np.savez(FEATURES_FILE, paths=IMAGE_PATHS, features=FEATURES, labels=LABELS)
 
@@ -148,6 +150,7 @@ def index():
 
     # Similarity
     qfeat = hist_feature(img).reshape(1,-1)
+    print(qfeat.shape, FEATURES.shape)
     sims = cosine_similarity(qfeat, FEATURES)[0]
     idx = sims.argsort()[-3:][::-1]
 
