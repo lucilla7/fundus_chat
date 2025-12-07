@@ -11,7 +11,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'uploads'
-DATASET_FOLDER = 'dataset'
+DATASET_FOLDER = '1000images' # change later to 'dataset'
 FEATURES_FILE = 'features.npz'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
