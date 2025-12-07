@@ -10,7 +10,7 @@ from PIL import Image
 from sklearn.metrics.pairwise import cosine_similarity
 
 app = Flask(__name__)
-UPLOAD_FOLDER = 'uploads'
+UPLOAD_FOLDER = 'static/uploads'
 DATASET_FOLDER = 'dataset' # change later to 'dataset'
 FEATURES_FILE = 'features.npz'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
@@ -41,14 +41,14 @@ HTML = """
 <hr>
 <h3>Results</h3>
 <p><b>Vessel Overlay:</b></p>
-<img src="{{ result.vessel_path }}" width=300>
+<img src="{{ url_for('static', filename=result.vessel_path) }}" width=300>
 <p><b>Optic Disc Overlay:</b></p>
-<img src="{{ result.disc_path }}" width=300>
+<img src="{{ url_for('static', filename=result.disc_path) }}" width=300>
 
 <h3>Similar Images</h3>
 {% for item in result.neighbors %}
   <div style="margin-bottom:10px;">
-    <img src="{{ item.path }}" width=200><br>
+    <img src="{{ url_for('static', filename=item.path) }}" width=200><br>
     Class: {{ item.label }}<br>
     Similarity: {{ '%.3f'|format(item.score) }}
   </div>
@@ -143,21 +143,32 @@ def index():
     v_overlay, vmask = vessel_overlay(img)
     d_overlay, dmask = disc_overlay(img)
 
-    vpath = path.replace('.', '_vessel.')
-    dpath = path.replace('.', '_disc.')
-    cv2.imwrite(vpath, v_overlay)
-    cv2.imwrite(dpath, d_overlay)
+    # creating path
+    base = os.path.basename(path)         # currimage.jpg
+    name, ext = os.path.splitext(base)    # currimage, .jpg
+
+    v_filename = f"{name}_vessel{ext}"
+    d_filename = f"{name}_disc{ext}"
+
+    vpath = f"uploads/{v_filename}"        # relative path for HTML
+    dpath = f"uploads/{d_filename}"
+    
+    cv2.imwrite(os.path.join(UPLOAD_FOLDER, v_filename), v_overlay)
+    cv2.imwrite(os.path.join(UPLOAD_FOLDER, d_filename), d_overlay)
 
     # Similarity
     qfeat = hist_feature(img).reshape(1,-1)
-    print(qfeat.shape, FEATURES.shape)
     sims = cosine_similarity(qfeat, FEATURES)[0]
     idx = sims.argsort()[-3:][::-1]
 
     neighbors = []
     for i in idx:
+
+        original = IMAGE_PATHS[i]
+        # Convert dataset/... → uploads/...  (must copy file IRL)
+        rel_path = original.replace("dataset/", "uploads/")
         neighbors.append({
-            'path': IMAGE_PATHS[i],
+            'path': rel_path,
             'label': LABELS[i],
             'score': float(sims[i])
         })
@@ -175,7 +186,7 @@ def index():
     if q.strip():
         reply += " Regarding your question: this demo references the overlays and nearest images to give a simple answer."
 
-    return render_template_string(HTML, result={
+    result_dict={
         'vessel_path': vpath,
         'disc_path': dpath,
         'neighbors': neighbors,
@@ -183,7 +194,10 @@ def index():
         'vessel_density': vessel_density,
         'disc_area': disc_area,
         'reply': reply
-    })
+    }
+
+    return render_template_string(HTML, result=result_dict)
+
 
 if __name__ == '__main__':
     app.run(debug=True)
