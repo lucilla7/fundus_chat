@@ -7,13 +7,17 @@ import os
 import cv2
 import numpy as np
 from PIL import Image
+import math
 from sklearn.metrics.pairwise import cosine_similarity
+from skimage.filters import frangi
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'static/uploads'
 DATASET_FOLDER = 'dataset' # change later to 'dataset'
 FEATURES_FILE = 'features.npz'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+HAVE_FRANGI = True
 
 # --------------------------------------------------
 # HTML Template
@@ -72,8 +76,9 @@ def load_image(path):
     return cv2.imread(path)
 
 def vessel_overlay(img):
+
     g = img[:,:,1]
-    clahe = cv2.createCLAHE(2.0,(8,8))
+    clahe = cv2.createCLAHE(3.0,(8,8))
     g2 = clahe.apply(g)
     bl = cv2.medianBlur(g2,5)
     thr, mask = cv2.threshold(bl,0,255,cv2.THRESH_OTSU)
@@ -81,15 +86,59 @@ def vessel_overlay(img):
     overlay[mask==0] = [0,255,0]
     return overlay, mask
 
-def disc_overlay(img):
+def disc_overlay_old(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(2.0,(8,8))
+    clahe = cv2.createCLAHE(1.0,(9,9))
     g2 = clahe.apply(gray)
     bl = cv2.GaussianBlur(g2,(9,9),0)
     thr, mask = cv2.threshold(bl,0,255,cv2.THRESH_OTSU)
     overlay = img.copy()
     overlay[mask==0] = [255,0,0]
     return overlay, mask
+
+
+def disc_overlay(img):
+
+    # --- Red channel (optic disc strongest here)
+    r = img[:,:,2]
+
+    # --- White Top-Hat to isolate bright local blob
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (55,55))
+    tophat = cv2.morphologyEx(r, cv2.MORPH_TOPHAT, kernel)
+
+    # --- Normalize
+    tophat = cv2.normalize(tophat, None, 0, 255, cv2.NORM_MINMAX)
+
+    # --- Smooth
+    bl = cv2.GaussianBlur(tophat, (15,15), 0)
+
+    # --- Threshold
+    _, th = cv2.threshold(bl, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    # --- Morphological cleanup
+    th = cv2.morphologyEx(th, cv2.MORPH_CLOSE,
+                          cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25,25)))
+    th = cv2.morphologyEx(th, cv2.MORPH_OPEN,
+                          cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15,15)))
+
+    # --- Largest component = optic disc
+    num, labels, stats, _ = cv2.connectedComponentsWithStats(th, 8)
+    if num > 1:
+        largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+        mask = (labels == largest).astype(np.uint8) * 255
+    else:
+        mask = th
+
+    # --- Overlay
+    overlay = img.copy()
+    overlay[mask == 0] = [0, 0, 255]
+
+    return overlay, mask
+
+
+# ---------------------------------------------------------
+# Feature extraction for similarity
+# ---------------------------------------------------------
 
 def hist_feature(img):
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)

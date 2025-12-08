@@ -67,6 +67,13 @@ HTML = """
 {% endif %}
 </body></html>
 """
+# --------------------------------------------------
+# Models
+# --------------------------------------------------
+MODEL_VESSEL = 'models/model_vessels.pth'
+MODEL_DISC = 'models/model_disc.pth'
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 # --------------------------------------------------
 # Image utilities
@@ -74,7 +81,9 @@ HTML = """
 def load_image(path):
     return cv2.imread(path)
 
-def vessel_overlay(img):
+
+# ---------- Fast fallback methods ----------
+def fast_vessels(img):
     g = img[:,:,1]
     clahe = cv2.createCLAHE(2.0,(8,8))
     g2 = clahe.apply(g)
@@ -84,7 +93,7 @@ def vessel_overlay(img):
     overlay[mask==0] = [0,255,0]
     return overlay, mask
 
-def disc_overlay(img):
+def fast_disc(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     clahe = cv2.createCLAHE(2.0,(8,8))
     g2 = clahe.apply(gray)
@@ -93,6 +102,67 @@ def disc_overlay(img):
     overlay = img.copy()
     overlay[mask==0] = [255,0,0]
     return overlay, mask
+
+# ---------------------------------------------------------
+# CNN loading
+# ---------------------------------------------------------
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+vessel_model = None
+disc_model  = None
+
+if os.path.exists("models/model_vessels.pth"):
+    vessel_model = UNetSmall(in_ch=3, out_ch=1, base=32).to(device)
+    vessel_model.load_state_dict(torch.load("models/model_vessels.pth", map_location=device))
+    vessel_model.eval()
+
+if os.path.exists("models/model_disc.pth"):
+    disc_model = UNetSmall(in_ch=3, out_ch=1, base=32).to(device)
+    disc_model.load_state_dict(torch.load("models/model_disc.pth", map_location=device))
+    disc_model.eval()
+
+# ---------------------------------------------------------
+# CNN inference
+# ---------------------------------------------------------
+def cnn_infer(model, img_bgr, thr=0.4):
+    H, W = img_bgr.shape[:2]
+    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+    img_resized = cv2.resize(img_rgb, (512,512))
+    t = img_resized.astype("float32") / 255.0
+    t = torch.from_numpy(t.transpose(2,0,1)).unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        pred = model(t)[0,0].cpu().numpy()
+
+    pred = cv2.resize(pred, (W,H))
+    mask = (pred >= thr).astype("uint8") * 255
+    return mask
+
+# ---------------------------------------------------------
+# HTML image overlay generation
+# ---------------------------------------------------------
+def vessel_overlay(img):
+    """Try CNN, fallback to fast."""
+    if vessel_model is not None:
+        mask = cnn_infer(vessel_model, img)
+        overlay = img.copy()
+        overlay[mask>0] = (0,255,0)
+        return mask, overlay
+    else:
+        return fast_vessels(img)
+
+def disc_overlay(img):
+    if disc_model is not None:
+        mask = cnn_infer(disc_model, img)
+        overlay = img.copy()
+        overlay[mask>0] = (0,0,255)
+        return mask, overlay
+    else:
+        return fast_disc(img)
+    
+# ---------------------------------------------------------
+# Feature extraction for similarity
+# ---------------------------------------------------------
 
 def hist_feature(img):
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
