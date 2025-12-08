@@ -9,6 +9,9 @@ import numpy as np
 from PIL import Image
 from sklearn.metrics.pairwise import cosine_similarity
 
+import torch
+from unet import UNetSmall
+
 app = Flask(__name__)
 UPLOAD_FOLDER = 'static/uploads'
 DATASET_FOLDER = 'dataset' # change later to 'dataset'
