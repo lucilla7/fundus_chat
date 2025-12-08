@@ -1,24 +1,27 @@
-# Fundus Chat Line 
+# app_funduschat_flask.py
+# Fundus Chat Line – runnable demo app
+# Demo only — not for clinical use.
 
 from flask import Flask, request, render_template_string
 import os
 import cv2
 import numpy as np
-# from PIL import Image
-# import math
+from PIL import Image
+import math
 from sklearn.metrics.pairwise import cosine_similarity
-# from skimage.filters import frangi
+from skimage.filters import frangi
 
 app = Flask(__name__)
 UPLOAD_FOLDER = 'static/uploads'
-DATASET_FOLDER = 'dataset' # change later to '1000images'
+DATASET_FOLDER = '1000images' # change later to 'dataset'
 FEATURES_FILE = 'features.npz'
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# toggle for frangi filter -- check 
 HAVE_FRANGI = True
 
-# HTML code
+# --------------------------------------------------
+# HTML Template
+# --------------------------------------------------
 HTML = """
 <!DOCTYPE html>
 <html>
@@ -66,18 +69,15 @@ HTML = """
 </body></html>
 """
 
-# functions for image processing
+# --------------------------------------------------
+# Image utilities
+# --------------------------------------------------
 def load_image(path):
     return cv2.imread(path)
 
 def vessel_overlay(img):
-    '''
-    Function for computing fundus vessel overlays
-    '''
-    # green channel
-    g = img[:,:,1]
 
-    # histogram calculation
+    g = img[:,:,1]
     clahe = cv2.createCLAHE(3.0,(8,8))
     g2 = clahe.apply(g)
     bl = cv2.medianBlur(g2,5)
@@ -86,24 +86,42 @@ def vessel_overlay(img):
     overlay[mask==0] = [0,255,0]
     return overlay, mask
 
+def disc_overlay_old(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(1.0,(9,9))
+    g2 = clahe.apply(gray)
+    bl = cv2.GaussianBlur(g2,(9,9),0)
+    thr, mask = cv2.threshold(bl,0,255,cv2.THRESH_OTSU)
+    overlay = img.copy()
+    overlay[mask==0] = [255,0,0]
+    return overlay, mask
+
+
 def disc_overlay(img):
 
-    # red channel
+    # --- Red channel (optic disc strongest here)
     r = img[:,:,2]
 
-    # tophat to isolate bright local blob
+    # --- White Top-Hat to isolate bright local blob
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (55,55))
     tophat = cv2.morphologyEx(r, cv2.MORPH_TOPHAT, kernel)
+
+    # --- Normalize
     tophat = cv2.normalize(tophat, None, 0, 255, cv2.NORM_MINMAX)
+
+    # --- Smooth
     bl = cv2.GaussianBlur(tophat, (15,15), 0)
 
+    # --- Threshold
     _, th = cv2.threshold(bl, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
+    # --- Morphological cleanup
     th = cv2.morphologyEx(th, cv2.MORPH_CLOSE,
                           cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (25,25)))
     th = cv2.morphologyEx(th, cv2.MORPH_OPEN,
                           cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15,15)))
 
+    # --- Largest component = optic disc
     num, labels, stats, _ = cv2.connectedComponentsWithStats(th, 8)
     if num > 1:
         largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
@@ -111,21 +129,26 @@ def disc_overlay(img):
     else:
         mask = th
 
+    # --- Overlay
     overlay = img.copy()
     overlay[mask == 0] = [0, 0, 255]
 
     return overlay, mask
 
 
+# ---------------------------------------------------------
 # Feature extraction for similarity
+# ---------------------------------------------------------
+
 def hist_feature(img):
-    # 3d hsv histogram
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     hist = cv2.calcHist([hsv],[0,1,2],None,[8,8,8],[0,180,0,256,0,256]).flatten()
     hist = hist / (np.linalg.norm(hist)+1e-8)
     return hist
 
-# preloading dataset features
+# --------------------------------------------------
+# Preload dataset features
+# --------------------------------------------------
 if os.path.exists(FEATURES_FILE):
     data = np.load(FEATURES_FILE, allow_pickle=True)
     IMAGE_PATHS = data['paths'].tolist()
@@ -134,10 +157,13 @@ if os.path.exists(FEATURES_FILE):
 else:
     IMAGE_PATHS, FEATURES, LABELS = [], [], []
     for cls in os.listdir(DATASET_FOLDER):
-        p = os.path.join(DATASET_FOLDER, cls)
+        cdir = os.path.join(DATASET_FOLDER, cls)
+        if not os.path.isdir(cdir): continue
+        for f in os.listdir(cdir):
+            if not f.lower().endswith(('jpg','png','jpeg')): continue
+            p = os.path.join(cdir, f)
         if not p.lower().endswith(('jpg','png','jpeg')): continue
         img = load_image(p)
-        # check image sanity
         if img is None: continue
         IMAGE_PATHS.append(p)
         FEATURES.append(hist_feature(img))
@@ -146,7 +172,9 @@ else:
     FEATURES = np.array(FEATURES)
     np.savez(FEATURES_FILE, paths=IMAGE_PATHS, features=FEATURES, labels=LABELS)
 
-### flask code
+# --------------------------------------------------
+# Flask Route
+# --------------------------------------------------
 @app.route('/', methods=['GET','POST'])
 def index():
     if request.method=='GET':
@@ -177,7 +205,7 @@ def index():
     cv2.imwrite(os.path.join(UPLOAD_FOLDER, v_filename), v_overlay)
     cv2.imwrite(os.path.join(UPLOAD_FOLDER, d_filename), d_overlay)
 
-    # similarity check with cosine
+    # Similarity
     qfeat = hist_feature(img).reshape(1,-1)
     sims = cosine_similarity(qfeat, FEATURES)[0]
     sims = sims[sims<1]     # remove same image
@@ -195,7 +223,7 @@ def index():
             'score': float(sims[i])
         })
 
-    # results summary
+    # Summary
     provisional = max([n['label'] for n in neighbors], key=[n['label'] for n in neighbors].count)
     vessel_density = vmask.mean()/255
     disc_area = dmask.mean()/255
